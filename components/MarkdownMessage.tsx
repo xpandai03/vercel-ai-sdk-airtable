@@ -5,7 +5,7 @@ interface MarkdownMessageProps {
 }
 
 export function MarkdownMessage({ content }: MarkdownMessageProps) {
-  // Simple markdown parsing for bold, italic, and line breaks
+  // Enhanced markdown parsing for bold, italic, links, and line breaks
   const parseMarkdown = (text: string): React.ReactNode => {
     // Split by line breaks first
     const lines = text.split('\n')
@@ -21,10 +21,28 @@ export function MarkdownMessage({ content }: MarkdownMessageProps) {
       let currentText = line
       let keyCounter = 0
       
+      // Replace URLs with clickable links
+      currentText = currentText.replace(/https?:\/\/[^\s]+/g, (match) => {
+        const placeholder = `__LINK_${keyCounter}__`
+        parts.push(
+          <a 
+            key={`link-${keyCounter}`} 
+            href={match} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-800 underline break-all"
+          >
+            {match}
+          </a>
+        )
+        keyCounter++
+        return placeholder
+      })
+      
       // Replace bold text
       currentText = currentText.replace(/\*\*([^*]+)\*\*/g, (match, p1) => {
         const placeholder = `__BOLD_${keyCounter}__`
-        parts.push(<strong key={`bold-${keyCounter}`}>{p1}</strong>)
+        parts.push(<strong key={`bold-${keyCounter}`} className="font-semibold">{p1}</strong>)
         keyCounter++
         return placeholder
       })
@@ -32,13 +50,13 @@ export function MarkdownMessage({ content }: MarkdownMessageProps) {
       // Replace italic text
       currentText = currentText.replace(/_([^_]+)_/g, (match, p1) => {
         const placeholder = `__ITALIC_${keyCounter}__`
-        parts.push(<em key={`italic-${keyCounter}`}>{p1}</em>)
+        parts.push(<em key={`italic-${keyCounter}`} className="italic text-gray-600">{p1}</em>)
         keyCounter++
         return placeholder
       })
       
       // Split the text and insert formatted parts
-      const segments = currentText.split(/__(?:BOLD|ITALIC)_\d+__/)
+      const segments = currentText.split(/__(?:BOLD|ITALIC|LINK)_\d+__/)
       const result: React.ReactNode[] = []
       let partIndex = 0
       
@@ -59,5 +77,5 @@ export function MarkdownMessage({ content }: MarkdownMessageProps) {
     })
   }
   
-  return <>{parseMarkdown(content)}</>
+  return <div className="whitespace-pre-wrap break-words">{parseMarkdown(content)}</div>
 }
