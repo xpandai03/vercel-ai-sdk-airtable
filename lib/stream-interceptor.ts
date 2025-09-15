@@ -1,6 +1,7 @@
 import { 
   getTablesList, 
   searchTable, 
+  searchTableWithQuery,
   countTableRecords,
   formatRecordsForChat 
 } from './airtable-simple'
@@ -62,6 +63,26 @@ export async function processAirtableMarkers(text: string): Promise<string> {
     }
   }
   
+  // Process {{QUERY:tableName:searchTerm:count}} markers for natural language search
+  const queryPattern = /\{\{QUERY:([^:]+):([^:]+):(\d+)\}\}/g
+  const queryMatches = [...processedText.matchAll(queryPattern)]
+  
+  for (const match of queryMatches) {
+    const [fullMatch, tableName, searchTerm, countStr] = match
+    const maxRecords = parseInt(countStr, 10)
+    
+    try {
+      console.log(`Processing query for "${searchTerm}" in table: ${tableName}, max: ${maxRecords}`)
+      const result = await searchTableWithQuery(tableName.trim(), searchTerm.trim(), maxRecords)
+      const formatted = formatRecordsForChat(result.records)
+      processedText = processedText.replace(fullMatch, formatted)
+      console.log(`Replaced ${fullMatch} with ${result.count} records`)
+    } catch (error) {
+      console.error(`Error processing ${fullMatch}:`, error)
+      processedText = processedText.replace(fullMatch, `[Error searching ${tableName}]`)
+    }
+  }
+  
   return processedText
 }
 
@@ -94,34 +115,33 @@ export function createAirtableInterceptor(originalStream: ReadableStream): Reada
           const chunk = decoder.decode(value, { stream: true })
           buffer += chunk
           
-          // Check if we have complete markers to process
-          // We'll process when we have a complete marker or enough text
+          // Check if we have an incomplete marker
+          const hasOpenMarker = buffer.includes('{{') && 
+            buffer.lastIndexOf('{{') > buffer.lastIndexOf('}}')
+          
+          // If we have complete markers, process them
           const hasCompleteMarker = 
-            (buffer.includes('{{TABLES}}') && buffer.indexOf('{{TABLES}}') + 10 <= buffer.length) ||
+            (buffer.includes('{{TABLES}}')) ||
             (buffer.includes('{{SEARCH:') && buffer.includes('}}')) ||
+            (buffer.includes('{{QUERY:') && buffer.includes('}}')) ||
             (buffer.includes('{{COUNT:') && buffer.includes('}}'))
           
-          // Process if we have complete markers or buffer is getting large
-          if (hasCompleteMarker || buffer.length > 500) {
-            // Find a safe split point (not in the middle of a marker)
-            let splitPoint = buffer.length
-            
-            // If buffer is large, try to find a safe split point
-            if (buffer.length > 500) {
-              // Look for last complete sentence or space before any open marker
-              const openMarkerIndex = buffer.lastIndexOf('{{')
-              if (openMarkerIndex > 0 && !buffer.substring(openMarkerIndex).includes('}}')) {
-                splitPoint = openMarkerIndex
-              }
-            }
-            
-            // Process the safe portion
-            const toProcess = buffer.substring(0, splitPoint)
-            buffer = buffer.substring(splitPoint)
-            
-            if (toProcess) {
-              const processed = await processAirtableMarkers(toProcess)
-              controller.enqueue(encoder.encode(processed))
+          if (hasCompleteMarker) {
+            // Process all complete markers in the buffer
+            const processed = await processAirtableMarkers(buffer)
+            buffer = ''
+            controller.enqueue(encoder.encode(processed))
+          } else if (!hasOpenMarker && buffer.length > 0) {
+            // No markers in progress, stream immediately
+            controller.enqueue(encoder.encode(buffer))
+            buffer = ''
+          } else if (hasOpenMarker && buffer.length > 1000) {
+            // Buffer getting too large with open marker, release content before marker
+            const openMarkerIndex = buffer.lastIndexOf('{{')
+            if (openMarkerIndex > 0) {
+              const toRelease = buffer.substring(0, openMarkerIndex)
+              buffer = buffer.substring(openMarkerIndex)
+              controller.enqueue(encoder.encode(toRelease))
             }
           }
         }
